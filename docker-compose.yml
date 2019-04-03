@@ -1,0 +1,22 @@
+version: "2"
+services:
+
+  aggregation1:
+    image: "ploh/go_rtb_agg_rtb4free"
+    environment:
+      RTBAGG_ESAGGURL: "http://elastic1:9200"
+      RTBAGG_MYSQLHOST: "db"
+      RTBAGG_MYSQLUSER: "dbuser"
+      RTBAGG_MYSQLPASSWORD: "dbpassword"
+      RTBAGG_ENABLEDOMAINAGG: "false"
+      RTBAGG_ESAGGINDEX: "bidagg"
+      RTBAGG_ESAGGDOMAININDEX: "domainagg"
+      RTBAGG_BROKERLIST: "kafka1:9093"
+      RTBAGG_ENABLEAGGARRAYSEND: "false"
+    networks:
+      - kafka_net
+
+networks:
+  kafka_net:
+    external: true
+
