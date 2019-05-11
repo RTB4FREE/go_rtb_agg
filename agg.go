@@ -9,14 +9,15 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	cluster "github.com/bsm/sarama-cluster"
+	"github.com/Shopify/sarama"
 	log "github.com/go-ozzo/ozzo-log"
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
+	logk "log"
 )
 
 var (
 	brokerList        = kingpin.Flag("brokerList", "List of brokers to connect").Default("kafka:9092").String()
+	kafkaVersion        = kingpin.Flag("kafkaVersion", "Kafka version").Default("0.10.2.1").String()
 	partition         = kingpin.Flag("partition", "Partition number").Default("0").String()
 	offsetType        = kingpin.Flag("offsetType", "Offset Type (OffsetNewest | OffsetOldest)").Default("-1").Int()
 	messageCountStart = kingpin.Flag("messageCountStart", "Message counter start from:").Int()
@@ -117,6 +118,9 @@ func main() {
 	//   env variable format: RTBAGG_<uppercase key>, ie RTBAGG_BROKERLIST
 	if v := getEnvValue("brokerList"); v != "" {
 		*brokerList = v
+	}
+	if v := getEnvValue("kafkaVersion"); v != "" {
+		*kafkaVersion = v
 	}
 	if v := getEnvValue("partition"); v != "" {
 		*partition = v
@@ -235,8 +239,17 @@ func main() {
 		panic("MySQL error on initial read.")      // Let docker restart to reread.  Need initial db to be set.
 	}
 
-	config := cluster.NewConfig()
-	config.Group.Mode = cluster.ConsumerModePartitions
+//	config := cluster.NewConfig()
+//	config.Group.Mode = cluster.ConsumerModePartitions
+	if *debug {
+		sarama.Logger = logk.New(os.Stdout, "[sarama] ", logk.LstdFlags)
+	}
+	version, err2 := sarama.ParseKafkaVersion(*kafkaVersion)
+	if err2 != nil {
+		panic(err2)
+	}
+	config := sarama.NewConfig()
+	config.Version = version
 
 	// Set up CTL-C to break program
 	signals := make(chan os.Signal, 1)
@@ -249,10 +262,15 @@ func main() {
 	ticker := time.NewTicker(time.Duration(intervalSecs) * time.Second)
 
 	//Subscribe to Kafka topics
+	/*
 	go getTopic(config, brokers, []string{"bids"})
 	go getTopic(config, brokers, []string{"wins"})
 	go getTopic(config, brokers, []string{"pixels"})
 	go getTopic(config, brokers, []string{"clicks"})
+	*/
+
+	topics := []string{"bids","wins","pixels","clicks"}
+	go getTopics(config, brokers, topics)
 
 	// Wait for CTL-C. Will kill all go getTopic routines
 	go func() {

@@ -2,8 +2,7 @@ version: "2"
 services:
 
   aggregation1:
-    image: "ploh/go_rtb_agg_rtb4free"
-#    image: go_rtb_agg
+    image: go_rtb_agg
     environment:
       RTBAGG_ESAGGURL: "http://elastic1:9200"
       RTBAGG_MYSQLHOST: "db"
@@ -14,10 +13,4 @@ services:
       RTBAGG_ESAGGDOMAININDEX: "domainagg"
       RTBAGG_BROKERLIST: "kafka1:9093"
       RTBAGG_ENABLEAGGARRAYSEND: "false"
-    networks:
-      - kafka_net
-
-networks:
-  kafka_net:
-    external: true
 

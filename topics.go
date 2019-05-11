@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	cluster "github.com/bsm/sarama-cluster"
+	"context"
+	"github.com/Shopify/sarama"
 )
 
 // BidFields - message format of Kafka bids topic
@@ -59,88 +59,122 @@ type ClickFields struct {
 }
 
 // Separate go routine for each topic
-func getTopic(config *cluster.Config, brokers []string, topics []string) {
+//func getTopic(config *cluster.Config, brokers []string, topics []string) {
+
+func getTopics(config *sarama.Config, brokers []string, topics []string) {	
 	log1 := logger.GetLogger("getTopic")
 	log1.Info("Connect to brokers ", brokers, " topics ", topics)
-	consumer, err2 := cluster.NewConsumer(brokers, "rtb-agg-consumer-group", topics, config)
+
+	//consumer, err2 := cluster.NewConsumer(brokers, "rtb-agg-consumer-group", topics, config)
+
+	consumer := Consumer{}
+	ctx := context.Background()
+	client, err2 := sarama.NewConsumerGroup(brokers, "rtb-agg-consumer-group", config)
 	if err2 != nil {
 		panic(err2)
 	}
 	//defer consumer.Close()
 	go func() {
-		//log1 := logger.GetLogger("getTopic go func")
 		for {
-			select {
-			case part, ok := <-consumer.Partitions():
-				if !ok {
-					fmt.Println("consumer.Partions error.")
-					return
-				}
-				// start a separate goroutine to consume messages
-				go func(pc cluster.PartitionConsumer) {
-					log1 := logger.GetLogger("getTopic kafka partition")
-					for msg := range pc.Messages() {
-						subCounter.Lock()
-						subCounter.count[msg.Topic]++
-						subCounter.Unlock()
-						log1.Debug(fmt.Sprintf("Kafka subscribe messsage: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
-						switch msg.Topic {
-						case "bids":
-							fields := BidFields{}
-							if err := json.Unmarshal(msg.Value, &fields); err != nil {
-								log1.Error(fmt.Sprintf("Kafka subscribe message error: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
-								log1.Error(fmt.Sprintf("JSON unmarshaling bid failed: %s", err))
-							} else {
-								aggBids.addBid(&fields)
-								// Don't do domain agg for bids
-							}
-						case "wins":
-							fields := WinFields{}
-							if err := json.Unmarshal(msg.Value, &fields); err != nil {
-								log1.Error(fmt.Sprintf("Kafka subscribe message error: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
-								log1.Error(fmt.Sprintf("JSON unmarshaling win failed: %s", err))
-							} else {
-								aggWins.addWin(&fields, false)
-								aggCosts.addCost(&fields, false)
-								if enableDomainAggregation {
-									aggWinsDom.addWin(&fields, true)
-									aggCostsDom.addCost(&fields, true)
-								}
-							}
-						case "pixels":
-							fields := PixelFields{}
-							if err := json.Unmarshal(msg.Value, &fields); err != nil {
-								log1.Error(fmt.Sprintf("Kafka subscribe message error: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
-								log1.Error(fmt.Sprintf("JSON unmarshaling pixel failed: %s", err))
-							} else {
-								aggPixels.addPixel(&fields, false)
-								if enableDomainAggregation {
-									aggPixelsDom.addPixel(&fields, true)
-								}
-							}
-						case "clicks":
-							fields := ClickFields{}
-							if err := json.Unmarshal(msg.Value, &fields); err != nil {
-								log1.Error(fmt.Sprintf("Kafka subscribe message error: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
-								log1.Error(fmt.Sprintf("JSON unmarshaling clicks failed: %s", err))
-							} else {
-								aggClicks.addClick(&fields, false)
-								if enableDomainAggregation {
-									aggClicksDom.addClick(&fields, true)
-								}
-							}
-						default:
-							log1.Alert(fmt.Sprintf("Unexpected topic %s.", msg.Topic))
-							return
-						}
-						consumer.MarkOffset(msg, "") // mark message as processed
-					}
-				}(part)
+			consumer.ready = make(chan bool, 0)
+			err := client.Consume(ctx, topics, &consumer)
+			if err != nil {
+				panic(err)
 			}
 		}
 	}()
-	return
+
+	<-consumer.ready // Await till the consumer has been set up
+	log1.Info("Sarama consumer up and running!...")
+
+	err := client.Close()
+	if err != nil {
+		panic(err)
+	}
+}		
+// Consumer represents a Sarama consumer group consumer
+type Consumer struct {
+	ready chan bool
 }
+
+// Setup is run at the beginning of a new session, before ConsumeClaim
+func (consumer *Consumer) Setup(sarama.ConsumerGroupSession) error {
+	// Mark the consumer as ready
+	close(consumer.ready)
+	return nil
+}
+
+// Cleanup is run at the end of a session, once all ConsumeClaim goroutines have exited
+func (consumer *Consumer) Cleanup(sarama.ConsumerGroupSession) error {
+	return nil
+}
+
+// ConsumeClaim must start a consumer loop of ConsumerGroupClaim's Messages().
+func (consumer *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	// NOTE:
+	// Do not move the code below to a goroutine.
+	// The `ConsumeClaim` itself is called within a goroutine, see:
+	// https://github.com/Shopify/sarama/blob/master/consumer_group.go#L27-L29
+	log1 := logger.GetLogger("ConsumeClaim")
+	for msg := range claim.Messages() {
+		subCounter.Lock()
+		subCounter.count[msg.Topic]++
+		subCounter.Unlock()
+		log1.Debug(fmt.Sprintf("Kafka subscribe messsage: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
+		switch msg.Topic {
+		case "bids":
+			fields := BidFields{}
+			if err := json.Unmarshal(msg.Value, &fields); err != nil {
+				log1.Error(fmt.Sprintf("Kafka subscribe message error: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
+				log1.Error(fmt.Sprintf("JSON unmarshaling bid failed: %s", err))
+			} else {
+				aggBids.addBid(&fields)
+				// Don't do domain agg for bids
+			}
+		case "wins":
+			fields := WinFields{}
+			if err := json.Unmarshal(msg.Value, &fields); err != nil {
+				log1.Error(fmt.Sprintf("Kafka subscribe message error: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
+				log1.Error(fmt.Sprintf("JSON unmarshaling win failed: %s", err))
+			} else {
+				aggWins.addWin(&fields, false)
+				aggCosts.addCost(&fields, false)
+				if enableDomainAggregation {
+					aggWinsDom.addWin(&fields, true)
+					aggCostsDom.addCost(&fields, true)
+				}
+			}
+		case "pixels":
+			fields := PixelFields{}
+			if err := json.Unmarshal(msg.Value, &fields); err != nil {
+				log1.Error(fmt.Sprintf("Kafka subscribe message error: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
+				log1.Error(fmt.Sprintf("JSON unmarshaling pixel failed: %s", err))
+			} else {
+				aggPixels.addPixel(&fields, false)
+				if enableDomainAggregation {
+					aggPixelsDom.addPixel(&fields, true)
+				}
+			}
+		case "clicks":
+			fields := ClickFields{}
+			if err := json.Unmarshal(msg.Value, &fields); err != nil {
+				log1.Error(fmt.Sprintf("Kafka subscribe message error: %s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value))
+				log1.Error(fmt.Sprintf("JSON unmarshaling clicks failed: %s", err))
+			} else {
+				aggClicks.addClick(&fields, false)
+				if enableDomainAggregation {
+					aggClicksDom.addClick(&fields, true)
+				}
+			}
+		default:
+			log1.Alert(fmt.Sprintf("Unexpected topic %s.", msg.Topic))
+		}
+		session.MarkMessage(msg, "")
+	}
+	return nil
+}
+
+
 
 // Update counters -
 //	Should be concurrency safe since since variable exlusively handled by independent go routines

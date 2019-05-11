@@ -6,10 +6,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 	neturl "net/url"
+	//"github.com/olivere/elastic"
 
-	"github.com/olivere/elastic"
+	// MUST USE COMPATIBLE ELASTICSEARCH VERSION
+	"gopkg.in/olivere/elastic.v6"
 )
 
 // AdSize - embedded structure for AggCounter Elasticsearch
