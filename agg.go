@@ -327,8 +327,13 @@ func writeLastInterval(elasticSearchAggregationURL string, elasticSearchAggregat
 	}
 	err := readMySQLTables(*mysqlHost, *mysqlDbname, *mysqlUser, *mysqlPassword)
 	if err {
-		fmt.Printf("MySQL error. Skip updating campaign db records for cycle %s.", tsStr)
+		log1.Error(fmt.Sprintf("MySQL error. Skip updating campaign db records for cycle %s.", tsStr))
 	}
+
+	log1.Debug("All counter keys, before write to elastic:\n")
+	log1.Debug("%+v\n",allkeys)
+
+
 	writeElastic(elasticSearchAggregationURL, elasticSearchAggregationIndex, elasticSearchAggregationDomainIndex, &allkeys, &allkeysDom)
 	log1.Info("Unprocessed # records - Bids: %d, Wins: %d, Pixels: %d, Clicks: %d, Cost: %d", len(aggBids), len(aggWins), len(aggCosts), len(aggPixels), len(aggClicks))
 
